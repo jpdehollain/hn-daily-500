@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>HN High Signal</title>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: auto; }
+    .post { margin-bottom: 2rem; }
+    .title { font-size: 1.2rem; font-weight: bold; }
+    .meta { color: gray; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+<h1>Hacker News - JP Edition</h1>
+<div id="posts"></div>
+
+<script>
+const API = "https://hn.algolia.com/api/v1/search_by_date";
+
+async function fetchPosts() {
+  const now = Math.floor(Date.now() / 1000);
+  const sevenDaysAgo = now - (7 * 24 * 60 * 60);
+
+  const url = `${API}?tags=story&numericFilters=points>500,created_at_i>${sevenDaysAgo}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return data.hits;
+}
+
+async function renderPosts(posts) {
+  const postsEl = document.getElementById("posts");
+  postsEl.innerHTML = "";
+
+  for (const p of posts) {
+    const domain = getDomain(p.url);
+    const comments = await getHNComments(p.objectID);
+
+    const div = document.createElement("div");
+    div.className = "post";
+
+    div.innerHTML = `
+      <div class="title">
+        <a href="${p.url || '#'}" target="_blank">${p.title}</a>
+        <span class="domain">(${domain})</span>
+      </div>
+      <div class="meta">${p.points} upvotes</div>
+      <div><strong>HN insight:</strong> ${comments[0] || "No comments yet"}</div>
+    `;
+
+    postsEl.appendChild(div);
+  }
+}
+
+function loadState() {
+  return JSON.parse(localStorage.getItem("hnState") || "{}");
+}
+
+function saveState(state) {
+  localStorage.setItem("hnState", JSON.stringify(state));
+}
+
+function getDomain(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "news.ycombinator.com";
+  }
+}
+
+async function getHNComments(id) {
+  const res = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
+  const story = await res.json();
+  if (!story.kids) return [];
+
+  const comments = [];
+  for (let i = 0; i < Math.min(3, story.kids.length); i++) {
+    const c = await fetch(`https://hacker-news.firebaseio.com/v0/item/${story.kids[i]}.json`).then(r => r.json());
+    if (c && c.text) comments.push(c.text.replace(/<[^>]+>/g, ""));
+  }
+  return comments;
+}
+
+function shouldShow(post, state) {
+  const seen = state[post.objectID];
+
+  if (!seen) return true;
+
+  if (post.points >= 500 && seen.pointsWhenSeen < 500) {
+    return true;
+  }
+
+  return false;
+}
+
+function cleanupState(state) {
+  const now = Date.now();
+  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+
+  for (const id in state) {
+    // skip non-post metadata like lastVisit
+    if (id === "lastVisit") continue;
+
+    const seenTime = new Date(state[id].seenAt).getTime();
+
+    if (now - seenTime > sevenDays) {
+      delete state[id];
+    }
+  }
+  return state
+}
+
+async function main() {
+  const postsEl = document.getElementById("posts");
+  let state = loadState();
+
+  const today = new Date().toDateString();
+
+  // ✅ If already loaded today → reuse cached posts
+  if (state.lastVisitDate === today && state.todaysPosts) {
+    renderPosts(state.todaysPosts);
+    return;
+  }
+
+  // ✅ Otherwise fetch fresh data
+  const posts = await fetchPosts();
+
+  state.seenPosts = state.seenPosts || {};
+  state = cleanupState(state);
+
+  const newPosts = [];
+
+  for (const p of posts) {
+    if (shouldShow(p, state.seenPosts)) {
+      newPosts.push(p);
+
+      state.seenPosts[p.objectID] = {
+        pointsWhenSeen: p.points,
+        seenAt: new Date().toISOString()
+      };
+    }
+  }
+
+  newPosts.sort((a, b) => b.points - a.points);
+
+  // ✅ Save today's snapshot
+  state.todaysPosts = newPosts;
+  state.lastVisitDate = today;
+
+  saveState(state);
+
+  renderPosts(newPosts);
+}
+
+main();
+</script>
+
+</body>
+</html>

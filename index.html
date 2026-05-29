@@ -2,23 +2,72 @@
 <html>
 <head>
   <title>HN-JP</title>
-  <style>
-    body { font-family: sans-serif; max-width: 800px; margin: auto; }
-    .post { margin-bottom: 2rem; }
-    .title { font-size: 1.2rem; font-weight: bold; }
-    .meta { color: gray; font-size: 0.9rem; }
+  <style>    
+    body {
+      font-family: Verdana, Geneva, sans-serif;
+      font-size: 14px;
+      padding: 10px;
+      max-width: 800px;
+      margin: auto;
+    }
+    .post { margin-bottom: 1.5rem; line-height: 1.4rem; }
+    .read { opacity: 0.5; }
+    .title { font-size: 1.1rem; font-weight: bold; }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: bold;
+      font-size: 1.5rem;
+    }
+    .header-right { font-size: 0.9rem; }
+    .meta { 
+      color: gray; 
+      font-size: 0.9rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .meta-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .domain {color: gray; font-size: 0.9rem; margin-left: 6px; }    
+    @media (max-width: 600px) {
+      body { font-size: 16px; }
+      .title { font-size: 1.05rem; }
+      .header {
+        font-size: 16px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+      }
+    }
   </style>
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
   <link rel="manifest" href="site.webmanifest">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
 
-<h1>
-  <img src="apple-touch-icon.png" width="64" height="64" class="logo" />
-  Hacker News - JP Edition
-</h1>
+<div class="header">
+  <div class="header-left">
+    <img src="apple-touch-icon.png" width="64" height="64" class="logo" />
+    Hacker News - JP Edition
+  </div>
+  <div class="header-right">
+    <label><input type="checkbox" id="showAll">Show all</label>
+  </div>
+</div>
 <div id="posts"></div>
 
 <script>
@@ -27,39 +76,91 @@ const API = "https://hn.algolia.com/api/v1/search_by_date";
 async function fetchPosts() {
   const now = Math.floor(Date.now() / 1000);
   const sevenDaysAgo = now - (7 * 24 * 60 * 60);
-
+  
   const url = `${API}?tags=story&numericFilters=points>500,created_at_i>${sevenDaysAgo}`;
   const res = await fetch(url);
   const data = await res.json();
   return data.hits;
 }
 
-async function renderPosts(posts) {
+function showPosts(postDivs, state) {
   const postsEl = document.getElementById("posts");
-  postsEl.innerHTML = "";
-
-  for (const p of posts) {
-    const domain = getDomain(p.url);
-    const comments = await getHNComments(p.objectID);
-
-    const div = document.createElement("div");
-    div.className = "post";
-
-    div.innerHTML = `
-      <div class="title">
-        <a href="${p.url || '#'}" target="_blank">${p.title}</a>
-        <span class="domain">(${domain})</span>
-      </div>
-      <div class="meta">${p.points} upvotes</div>
-      <div><strong>HN insight:</strong> ${comments[0] || "No comments yet"}</div>
-    `;
-
+  postsEl.innerHTML = ""; // important to clear when reloading
+  for (const { id, div } of postDivs) {
+    if (state.posts[id].read && !state.showAll) continue;
     postsEl.appendChild(div);
   }
 }
 
+function renderPosts(posts, state) {
+  const postDivs = [];
+  for (const p of posts) {
+    const domain = getDomain(p.url);
+    
+    const checkbox = document.createElement("input");
+    checkbox.id = `cb${p.objectID}`;
+    checkbox.type = "checkbox";
+    checkbox.checked = state.posts[p.objectID].read;
+    
+    const div = document.createElement("div");
+    div.className = "post";
+    if (state.posts[p.objectID].read) div.classList.add("read");
+    
+    const title = document.createElement("div");
+    title.className = "title";
+    title.innerHTML = `
+      <a href="${p.url || '#'}" target="_blank">${p.title}</a>
+      <span class="domain">(${domain})</span>
+    `;
+    div.appendChild(title);
+    
+    const meta = document.createElement("div");
+    meta.className = "meta";
+
+    const metaLeft = document.createElement("div");
+    metaLeft.className = "meta-left";
+    metaLeft.textContent = `${p.points} points ${timeAgo(p.created_at_i)}`;
+
+    const metaRight = document.createElement("div");
+    metaRight.className = "meta-right";
+
+    const label = document.createElement("label");
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(" Read"));
+
+    metaRight.appendChild(label);
+
+    meta.appendChild(metaLeft);
+    meta.appendChild(metaRight);
+
+    div.appendChild(meta);
+          
+    const topComment = document.createElement("div");
+    topComment.innerHTML = `
+    <strong>
+      <a href="https://news.ycombinator.com/item?id=${p.objectID}" target="_blank">HN top comment:</a>
+    </strong>
+    Loading comments...
+    `;
+    getHNComments(p.objectID).then(comments => {
+      topComment.innerHTML = `
+        <strong>
+          <a href="https://news.ycombinator.com/item?id=${p.objectID}" target="_blank">
+            HN top comment:
+          </a>
+        </strong>
+        ${comments[0] || "No comments yet"}
+      `;
+    });
+    div.appendChild(topComment);
+    postDivs.push({ id: p.objectID, div });
+  }
+  return postDivs;
+}
+        
 function loadState() {
-  return JSON.parse(localStorage.getItem("hnState") || "{}");
+  let state = JSON.parse(localStorage.getItem("hnState") || "{}");
+  return state;
 }
 
 function saveState(state) {
@@ -78,7 +179,7 @@ async function getHNComments(id) {
   const res = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
   const story = await res.json();
   if (!story.kids) return [];
-
+  
   const comments = [];
   for (let i = 0; i < Math.min(3, story.kids.length); i++) {
     const c = await fetch(`https://hacker-news.firebaseio.com/v0/item/${story.kids[i]}.json`).then(r => r.json());
@@ -87,75 +188,78 @@ async function getHNComments(id) {
   return comments;
 }
 
-function shouldShow(post, state) {
-  const seen = state[post.objectID];
-
-  if (!seen) return true;
-
-  if (post.points >= 500 && seen.pointsWhenSeen < 500) {
-    return true;
-  }
-
-  return false;
-}
-
-function cleanupState(state) {
-  const now = Date.now();
-  const sevenDays = 7 * 24 * 60 * 60 * 1000;
-
-  for (const id in state) {
-    // skip non-post metadata like lastVisit
-    if (id === "lastVisit") continue;
-
-    const seenTime = new Date(state[id].seenAt).getTime();
-
-    if (now - seenTime > sevenDays) {
-      delete state[id];
+function timeAgo(timestamp) {
+  const seconds = Math.floor((Date.now() - timestamp * 1000) / 1000);
+  
+  const intervals = [
+    ["year", 31536000],
+    ["month", 2592000],
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60]
+  ];
+  
+  for (const [label, value] of intervals) {
+    const count = Math.floor(seconds / value);
+    if (count > 0) {
+      return `${count} ${label}${count > 1 ? "s" : ""} ago`;
     }
   }
-  return state
+  
+  return "just now";
 }
 
 async function main() {
-  const postsEl = document.getElementById("posts");
-  let state = loadState();
-
-  const today = new Date().toDateString();
-
-  // ✅ If already loaded today → reuse cached posts
-  if (state.lastVisitDate === today && state.todaysPosts) {
-    renderPosts(state.todaysPosts);
-    return;
+  const APP_VERSION = "2.0";
+  const storedVersion = localStorage.getItem("app_version");
+  if (storedVersion !== APP_VERSION) {
+    localStorage.clear();
+    localStorage.setItem("app_version", APP_VERSION);
   }
 
-  // ✅ Otherwise fetch fresh data
+  const postsEl = document.getElementById("posts");
+  let state = loadState();
+  
   const posts = await fetchPosts();
-
-  state.seenPosts = state.seenPosts || {};
-  state = cleanupState(state);
-
-  const newPosts = [];
-
+  posts.sort((a, b) => b.points - a.points);
+  const postIDs = posts.map(p => p.objectID);
+  
+  if ("posts" in state) {
+    for (const id in state.posts) {
+      if (!postIDs.includes(id)) {
+        delete state.posts[id];
+      }
+    }
+  } else {
+    state.posts = {};
+  }
   for (const p of posts) {
-    if (shouldShow(p, state.seenPosts)) {
-      newPosts.push(p);
-
-      state.seenPosts[p.objectID] = {
-        pointsWhenSeen: p.points,
-        seenAt: new Date().toISOString()
+    if (!(p.objectID in state.posts)) {
+      state.posts[p.objectID] = { 
+        date: new Date(p.created_at_i * 1000).toISOString(), 
+        read: false 
       };
     }
   }
-
-  newPosts.sort((a, b) => b.points - a.points);
-
-  // ✅ Save today's snapshot
-  state.todaysPosts = newPosts;
-  state.lastVisitDate = today;
-
+  state.showAll = state.showAll || false;
   saveState(state);
+  
+  const postDivs = renderPosts(posts, state);
+  showPosts(postDivs, state);
+  
+  document.getElementById("showAll").addEventListener("change", (e) => {
+    state.showAll = e.target.checked;
+    saveState(state);
+    showPosts(postDivs, state);
+  });
 
-  renderPosts(newPosts);
+  for (const id of postIDs) {
+    document.getElementById(`cb${id}`).addEventListener("change", (e) => {
+      state.posts[id].read = e.target.checked;
+      saveState(state);
+      showPosts(postDivs, state);
+    });
+  }
 }
 
 main();
